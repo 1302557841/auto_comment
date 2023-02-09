@@ -7,7 +7,8 @@ JD自动评价（评价晒单带图，追评，服务评价）
 
 浏览器登录抓取CK（电脑端CK），添加变量PC_COOKIE，每次运行，最多评价10个订单
 
-（修改为JD_COOKIE）
+（修改为JD_COOKIE）似乎不行哈哈哈
+还是为PC_COOKIE
 
 www的那个地址抓CK，登录后F12点到network，不要用命令document.cookie抓，会不完整，找带cookie的请求复制
 
