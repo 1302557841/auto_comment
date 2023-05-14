@@ -4,9 +4,11 @@
 # @Author : @qiu-lzsnmb and @Dimlitter @Dylan
 # @File : auto_comment.py
 # 多账号评价，异常处理
+# 2023/3/28 修复乱码
+# 2023/4/19 当存在OPENAI_API_KEY环境变量时，启用AI评价；网络支持：1.环境变量OPENAI_API_BASE_URL反向代理、2.ProxyUrl代理、3.环境支持直连；
 '''
 new Env('自动评价');
-8 8 2 10 * https://raw.githubusercontent.com/6dylan6/auto_comment/main/jd_comment.py
+8 8 2 1 * https://raw.githubusercontent.com/6dylan6/auto_comment/main/jd_comment.py
 '''
 import argparse
 import copy
@@ -15,7 +17,7 @@ import os
 import random
 import sys
 import time,re
-
+import urllib.parse
 
 try:
     import jieba  # just for linting
@@ -24,6 +26,7 @@ try:
     #import yaml
     from lxml import etree
     import zhon.hanzi
+    
 except:
     print('解决依赖问题...稍等')
     os.system('pip3 install lxml &> /dev/null')
@@ -35,10 +38,7 @@ except:
     #import yaml
     from lxml import etree
     import requests
-
 import jdspider
-
-
 # constants
 CONFIG_PATH = './config.yml'
 USER_CONFIG_PATH = './config.user.yml'
@@ -104,6 +104,8 @@ class StyleFormatter(logging.Formatter):
 
 # 评价生成
 def generation(pname, _class=0, _type=1, opts=None):
+    if "OPENAI_API_KEY" in os.environ:
+        return generation_ai(pname, opts)
     opts = opts or {}
     items = ['商品名']
     items.clear()
@@ -160,6 +162,27 @@ def generation(pname, _class=0, _type=1, opts=None):
         opts['logger'].debug('Raw comments: %s', comments)
 
         return 5, comments.replace("$", name)
+
+# ChatGPT评价生成
+def generation_ai(pname, _class=0, _type=1, opts=None):
+    # 当存在 OPENAI_API_BASE_URL 时，使用反向代理
+    api_base_url = os.environ.get("OPENAI_API_BASE_URL", "https://api.openai.com")
+    api_key = os.environ["OPENAI_API_KEY"]
+    prompt = f"{pname} 写一段此商品的评价，简短、口语化"
+    response = requests.post(
+        f"{api_base_url}/v1/chat/completions",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        json={
+            "model": "gpt-3.5-turbo",
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 1024,
+        }
+    )
+    response_text = response.json()
+    return 5, response_text["choices"][0]["message"]["content"].strip()
 
 
 # 查询全部评价
@@ -247,7 +270,7 @@ def sunbw(N, opts=None):
         opts['logger'].debug('Commenting on items')
         for i, Order in enumerate(reversed(Order_data)):
             if i + 1 > 10:
-                opts['logger'].info(f'\t已评价10个订单，跳出')
+                opts['logger'].info(f'\n已评价10个订单，跳出')
                 break
             try:
                 oid = Order.xpath('tr[@class="tr-th"]/td/span[3]/a/text()')[0]
@@ -267,7 +290,7 @@ def sunbw(N, opts=None):
             idx = 0
             for oname, pid in zip(oname_data, pid_data):
                 pid = re.findall('(?<=jd.com/)[(0-9)*?]+',pid)[0]
-                opts['logger'].info(f'\t开始第{i+1}个订单: {oid}')
+                opts['logger'].info(f'\n开始第{i+1}个订单: {oid}')
                 opts['logger'].debug('pid: %s', pid)
                 opts['logger'].debug('oid: %s', oid)
                 xing, Str = generation(oname, opts=opts)
@@ -308,6 +331,8 @@ def sunbw(N, opts=None):
                     imgurl = random.choice(imgdata["imgComments"]["imgList"])["imageUrl"]
                     if ('imgdata2' in dir()):
                         imgurl2 = random.choice(imgdata2["imgComments"]["imgList"])["imageUrl"]
+                    else:
+                        imgurl2 = ''
                 except Exception:
                     imgurl = ''
                     imgurl2 = ''
@@ -326,7 +351,7 @@ def sunbw(N, opts=None):
                  'orderId': oid,
                  'productId': pid,
                  'score': str(xing),  # 商品几星
-                 'content': bytes(Str, encoding="gbk"),  # 评价内容
+                 'content': urllib.parse.quote(Str),  # 评价内容
                  'imgs': imgurl + ',' + imgurl2,
                  'saveStatus': 2,
                  'anonymousFlag': 1
@@ -398,7 +423,7 @@ def review(N, opts=None):
         opts['logger'].debug('Commenting on items')
         for i, Order in enumerate(reversed(Order_data)):
             if i + 1 > 10:
-                opts['logger'].info(f'\t已评价10个订单，跳出')
+                opts['logger'].info(f'\n已评价10个订单，跳出')
                 break
             oname = Order.xpath('td[1]/div/div[2]/div/a/text()')[0]
             _id = Order.xpath('td[3]/div/a/@href')[0]
@@ -411,13 +436,13 @@ def review(N, opts=None):
                 "").split('&orderId=')
             opts['logger'].debug('pid: %s', pid)
             opts['logger'].debug('oid: %s', oid)
-            opts['logger'].info(f'\t开始第{i+1}个订单: {oid}')
+            opts['logger'].info(f'\n开始第{i+1}个订单: {oid}')
             _, context = generation(oname, _type=0, opts=opts)
             opts['logger'].info(f'追评内容：{context}')
             data1 = {
                 'orderId': oid,
                 'productId': pid,
-                'content': bytes(context, encoding="gbk"),
+                'content': urllib.parse.quote(context),
                 'anonymousFlag': 1,
                 'score': 5
             }
@@ -485,11 +510,11 @@ def Service_rating(N, opts=None):
         opts['logger'].debug('Commenting on items')
         for i, Order in enumerate(reversed(Order_data)):
             if i + 1 > 10:
-                opts['logger'].info(f'\t已评价10个订单，跳出')
+                opts['logger'].info(f'\n已评价10个订单，跳出')
                 break
             #oname = Order.xpath('td[1]/div[1]/div[2]/div/a/text()')[0]
             oid = Order.xpath('td[1]/span[3]/a/text()')[0]
-            opts['logger'].info(f'\t开始第{i+1}个订单: {oid}')
+            opts['logger'].info(f'\n开始第{i+1}个订单: {oid}')
             opts['logger'].debug('oid: %s', oid)
             url1 = (f'https://club.jd.com/myJdcomments/insertRestSurvey.action'
                     f'?voteid=145&ruleid={oid}')
@@ -514,7 +539,7 @@ def Service_rating(N, opts=None):
                     opts['logger'].info(f'提交成功！')
             else:
                 opts['logger'].debug('Skipped sending comment request in dry run')
-            #opts['logger'].info("\t " + pj1.text)
+            #opts['logger'].info("\n " + pj1.text)
             opts['logger'].debug('Sleep time (s): %.1f', SERVICE_RATING_SLEEP_SEC)
             time.sleep(SERVICE_RATING_SLEEP_SEC)
             N['服务评价'] -= 1
@@ -586,6 +611,11 @@ if __name__ == '__main__':
         'dry_run': args.dry_run,
         'log_level': args.log_level
     }
+    if "DEBUG" in os.environ and os.environ["DEBUG"] == 'true':
+        opts = {
+            'dry_run': args.dry_run,
+            'log_level': 'DEBUG'
+    }      
     if hasattr(args, 'log_file'):
         opts['log_file'] = args.log_file
     else:
@@ -668,6 +698,16 @@ if __name__ == '__main__':
     else:
         logger.info("没有设置变量PC_COOKIE，请添加电脑端CK到环境变量")
         sys.exit(1)
+    if "OPENAI_API_KEY" in os.environ:
+        logger.info('已启用AI评价')
+        if "OPENAI_API_BASE_URL" in os.environ:
+            logger.info('  - 使用 OpenAI API 代理：' + os.environ["OPENAI_API_BASE_URL"])
+        elif os.environ.get("ProxyUrl").startswith("http"):
+            os.environ['http_proxy'] = os.getenv("ProxyUrl")
+            os.environ['https_proxy'] = os.getenv("ProxyUrl")
+            logger.info('  - 使用QL配置文件ProxyUrl代理：' + os.environ["ProxyUrl"])
+        else:
+            logger.info('  - 未使用代理，请确认当前网络环境可直连：api.openai.com')
     try:
         i = 1
         for ck in cks:        
@@ -692,7 +732,7 @@ if __name__ == '__main__':
             }
             logger.debug('Builtin HTTP request header: %s', headers)
             logger.debug('Starting main processes')
-            print ('\n开始第 '+ str(i) +'个账号评价。。。\n')
+            logger.info('\n开始第 '+ str(i) +' 个账号评价...\n')
             main(opts)
             i += 1
     # NOTE: It needs 3,000 times to raise this exception. Do you really want to
